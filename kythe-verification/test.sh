@@ -47,6 +47,7 @@ for fut in \
     "$BASIC/DocUri.hs" \
     "$BASIC/FunctionArgRef.hs" \
     "$BASIC/ImpExpDefs.hs $BASIC/ImportRefs.hs" \
+    "$BASIC/LetStmt.hs" \
     "$BASIC/LocalRef.hs" \
     "$BASIC/Module.hs" \
     "$BASIC/ModuleDocUri.hs" \

@@ -240,7 +240,9 @@ declsFromRenamed ctx (hsGroup, _, _, _) =
             -- TODO(jinwoo): Collect for signatures too.
             XValBindsLR (NValBinds binds _) ->
                 collectPatSymDefs . map snd $ binds
-    in (concat [defs, instDefs, variableBindDefs, valueBindDefs], instChanges)
+    in ( concat [defs, instDefs, variableBindDefs, valueBindDefs, letStmtDefs]
+       , instChanges
+       )
   where
     collectPatSymDefs :: [LHsBinds GhcRn] -> [DeclAndAlt]
     collectPatSymDefs binds = concatMap collectPatBinds binds
@@ -255,6 +257,7 @@ declsFromRenamed ctx (hsGroup, _, _, _) =
     keepFirst xs@((name, _):_) = Just $! (name, minimum $ map snd xs)
     mkDeclName n = nameDeclAlt ctx n Nothing typeStringyType
     explicitNames = concatMap namesFromForall . universeBi $ hsGroup
+    letStmtDefs = concatMap doStmtDecls . universeBi $ hsGroup
     implicitVarBindDefs =
         let -- Collect the usages so we can assign a binding at the first usage.
             -- Note: we could also just omit the location, making it an implicit
@@ -334,20 +337,21 @@ declsFromRenamed ctx (hsGroup, _, _, _) =
     tyClDecls (L _ (ClassDecl _ _ locName binders _ _ sigs _ ats _ _)) =
         let top = tyConLikeDecl locName
             tyvars = declsFromDataBinders binders
+            -- For typeclasses, we emit the declaration from the method name in
+            -- the method signature (as opposed to normal functions, where we
+            -- emit from the definition's name).
             fromSigs = concatMap (sigDecls . unLoc) sigs
             assocTys = concatMap (famDecls . unLoc) ats
         in top : fromSigs ++ tyvars ++ assocTys
-      where
-        -- For typeclasses, we emit the declaration from the method name in the
-        -- method signature (as opposed to normal functions, where we emit from
-        -- the definition's name).
-        sigDecls s = case s of
-            TypeSig _ lnames ty -> map (dataLikeDecl ty) lnames
-            ClassOpSig _ _ lnames ty -> map (dataLikeDecl ty) lnames
-            -- TODO(robinpalotai): PatSynSig
-            _ -> []
     tyClDecls (L _ (FamDecl _extDecl fd)) = famDecls fd
     tyClDecls (L _ (XTyClDecl no)) = noExtCon no
+
+    sigDecls :: Sig GhcRn -> [DeclAndAlt]
+    sigDecls s = case s of
+        TypeSig _ lnames ty -> map (dataLikeDecl ty) lnames
+        ClassOpSig _ _ lnames ty -> map (dataLikeDecl ty) lnames
+        -- TODO(robinpalotai): PatSynSig
+        _ -> []
 
     -- These appear both in top-level decls and in class decls.
     famDecls :: FamilyDecl GhcRn -> [DeclAndAlt]
@@ -398,7 +402,16 @@ declsFromRenamed ctx (hsGroup, _, _, _) =
                     in M.singleton key change
                 _ -> M.empty
     instDecls _ = Nothing
-    --
+
+    doStmtDecls :: Stmt GhcRn (LHsExpr GhcRn) -> [DeclAndAlt]
+    doStmtDecls (LetStmt NoExt (L _ (HsValBinds NoExt binds))) =
+      concatMap (sigDecls . unLoc) $
+        case binds of
+          ValBinds NoExt _ sigs -> sigs
+          XValBindsLR (NValBinds _ sigs) -> sigs
+    -- TODO(awpr): we could generate bindings for HsIPBinds, too.
+    doStmtDecls _ = []
+
     dataLikeDecl :: (GHC.Outputable a) => a -> Located Name -> DeclAndAlt
     dataLikeDecl a = declWithWrappedIdLoc (outputableStringyType ctx a)
     -- A DeclAndAlt for a type constructor or similar construct e.g. (a type
